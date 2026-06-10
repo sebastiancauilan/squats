@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 import pickle
 
-dataset = pd.read_csv(r'C:\Users\Sebastian\squats\dataset.csv')
+dataset = pd.read_csv('dataset.csv')
 
 X = dataset[[f'kp_{i}' for i in range(99)]]
 y = dataset['label']
@@ -16,7 +16,7 @@ model.fit(X_train, y_train)
 
 print(classification_report(y_test, model.predict(X_test)))
 
-with open(r'C:\Users\Sebastian\squats\model.pkl', 'wb') as f:
+with open('model.pkl', 'wb') as f:
     pickle.dump(model, f)
 
 print('Model saved!')

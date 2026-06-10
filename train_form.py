@@ -5,7 +5,7 @@ from sklearn.metrics import classification_report
 import pickle
 
 
-dataset = pd.read_csv(r'C:\Users\Sebastian\squats\squat_features_augmented.csv')
+dataset = pd.read_csv('squat_features_augmented.csv')
 
 features = [
      'left_knee_angle', 'right_knee_angle',
@@ -26,7 +26,7 @@ model.fit(X_train, y_train)
 
 print(classification_report(y_test, model.predict(X_test)))
 
-with open(r'C:\Users\Sebastian\squats\form_model.pkl', 'wb') as f:
+with open('form_model.pkl', 'wb') as f:
     pickle.dump(model, f)
 
 print('Form model saved!')
