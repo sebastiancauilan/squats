@@ -2,10 +2,27 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import pickle
 import numpy as np
+import os
 
 app = FastAPI()
 
-# Load models
+# Train form model if missing
+if not os.path.exists('form_model.pkl'):
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
+    features = [
+        'left_knee_angle','right_knee_angle','left_hip_angle','right_hip_angle',
+        'left_ankle_angle','right_ankle_angle','spine_angle','torso_lean',
+        'left_knee_lateral','right_knee_lateral','symmetry_score','hip_depth'
+    ]
+    dataset = pd.read_csv('squat_features_augmented.csv')
+    X = dataset[features]
+    y = dataset['label']
+    form_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    form_model.fit(X, y)
+    with open('form_model.pkl', 'wb') as f:
+        pickle.dump(form_model, f)
+
 with open('model.pkl', 'rb') as f:
     phase_model = pickle.load(f)
 
