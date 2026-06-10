@@ -1,8 +1,9 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, File, UploadFile
 import pickle
 import numpy as np
 import os
+import cv2
+import mediapipe as mp
 
 app = FastAPI()
 
@@ -29,6 +30,9 @@ with open('model.pkl', 'rb') as f:
 with open('form_model.pkl', 'rb') as f:
     form_model = pickle.load(f)
 
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose()
+
 form_labels = {
     0: 'Correct',
     1: 'Shallow squat',
@@ -38,18 +42,52 @@ form_labels = {
     5: 'Asymmetric squat'
 }
 
-class KeypointsInput(BaseModel):
-    keypoints: list[float]
-    form_features: list[float]
+def angle(a, b, c):
+    a, b, c = np.array(a), np.array(b), np.array(c)
+    ba, bc = a - b, c - b
+    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    return np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
 
 @app.post('/predict')
-def predict(data: KeypointsInput):
-    kp = np.array(data.keypoints).reshape(1, -1)
-    phase = phase_model.predict(kp)[0]
+async def predict(file: UploadFile = File(...)):
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb)
+
+    if not results.pose_landmarks:
+        return {'phase': 'unknown', 'form': None, 'reps': None}
+
+    landmarks = results.pose_landmarks.landmark
+
+    kp = []
+    for lm in landmarks:
+        kp.extend([lm.x, lm.y, lm.z])
+
+    def lm_coords(idx):
+        return [landmarks[idx].x, landmarks[idx].y]
+
+    left_knee   = angle(lm_coords(23), lm_coords(25), lm_coords(27))
+    right_knee  = angle(lm_coords(24), lm_coords(26), lm_coords(28))
+    left_hip    = angle(lm_coords(11), lm_coords(23), lm_coords(25))
+    right_hip   = angle(lm_coords(12), lm_coords(24), lm_coords(26))
+    left_ankle  = angle(lm_coords(25), lm_coords(27), lm_coords(31))
+    right_ankle = angle(lm_coords(26), lm_coords(28), lm_coords(32))
+    spine       = angle(lm_coords(11), lm_coords(23), lm_coords(25))
+    torso_lean  = angle(lm_coords(11), lm_coords(23), lm_coords(27))
+    left_knee_lat  = landmarks[25].x - landmarks[23].x
+    right_knee_lat = landmarks[26].x - landmarks[24].x
+    symmetry    = abs(left_knee - right_knee)
+    hip_depth   = landmarks[23].y
+
+    phase = phase_model.predict([kp])[0]
 
     form = None
     if phase == 'bottom':
-        ff = np.array(data.form_features).reshape(1, -1)
+        ff = [[left_knee, right_knee, left_hip, right_hip,
+               left_ankle, right_ankle, spine, torso_lean,
+               left_knee_lat, right_knee_lat, symmetry, hip_depth]]
         proba = form_model.predict_proba(ff)[0]
         if proba.max() >= 0.80:
             form = form_labels[proba.argmax()]

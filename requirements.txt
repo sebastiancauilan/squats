@@ -3,3 +3,5 @@ uvicorn
 scikit-learn==1.6.1
 numpy
 pandas
+mediapipe
+opencv-python-headless
