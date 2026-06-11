@@ -3,5 +3,5 @@ uvicorn
 scikit-learn==1.6.1
 numpy
 pandas
-mediapipe
+mediapipe==0.10.9
 Pillow
