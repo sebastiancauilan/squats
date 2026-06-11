@@ -2,7 +2,8 @@ from fastapi import FastAPI, File, UploadFile
 import pickle
 import numpy as np
 import os
-import cv2
+from PIL import Image
+import io
 import mediapipe as mp
 
 app = FastAPI()
@@ -51,9 +52,8 @@ def angle(a, b, c):
 @app.post('/predict')
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    image = Image.open(io.BytesIO(contents)).convert('RGB')
+    rgb = np.array(image)
     results = pose.process(rgb)
 
     if not results.pose_landmarks:
