@@ -5,6 +5,9 @@ import os
 from PIL import Image
 import io
 import mediapipe as mp
+import anthropic
+import requests
+from fastapi.responses import Response
 
 app = FastAPI()
 
@@ -95,3 +98,45 @@ async def predict(file: UploadFile = File(...)):
             form = 'Correct'
 
     return {'phase': phase, 'form': form}
+
+    PERSONALITY_PROMPTS = {
+    "tsundere": "You are a tsundere anime girl personal trainer. You secretly care but act annoyed and reluctant. Short sentences only, max 15 words. Be specific about the form error or rep count.",
+    "yandere": "You are a yandere anime girl personal trainer. Obsessively devoted, slightly intense, wants them to be perfect for you. Short sentences only, max 15 words.",
+}
+
+@app.post('/coach-voice')
+async def coach_voice(data: dict):
+    form = data.get('form', 'Correct')
+    reps = data.get('reps', 0)
+    streak = data.get('streak', 0)
+    personality = data.get('personality', 'tsundere')
+    voice_id = data.get('voice_id', 'vGQNBgLaiM3EdZtxIiuY')
+
+    if form != 'Correct' and form:
+        situation = f"The user just made a form error: {form}. React to this specific error."
+    elif streak >= 2:
+        situation = f"The user just completed {reps} reps with {streak} clean reps in a row. Give encouragement."
+    else:
+        situation = f"The user just completed rep {reps}. Give a short reaction."
+
+    anthropic_client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+    message = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        system=PERSONALITY_PROMPTS.get(personality, PERSONALITY_PROMPTS['tsundere']),
+        messages=[{"role": "user", "content": situation}]
+    )
+    line = message.content[0].text.strip()
+
+    xi_key = os.environ['ELEVENLABS_API_KEY']
+    tts_response = requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        headers={"xi-api-key": xi_key, "Content-Type": "application/json"},
+        json={
+            "text": line,
+            "model_id": "eleven_monolingual_v1",
+            "voice_settings": {"stability": 0.4, "similarity_boost": 0.8, "style": 0.6}
+        }
+    )
+
+    return Response(content=tts_response.content, media_type="audio/mpeg")

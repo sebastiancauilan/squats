@@ -6,3 +6,5 @@ pandas
 mediapipe==0.10.9
 Pillow
 python-multipart
+anthropic
+requests
