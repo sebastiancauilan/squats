@@ -3,7 +3,10 @@ import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'package:just_audio/just_audio.dart';
+import 'package:image/image.dart' as img;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 List<CameraDescription> cameras = [];
 const String apiUrl = 'https://web-production-a5f3b.up.railway.app/predict';
@@ -36,6 +39,8 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
+  
+  DateTime _lastSent = DateTime.now();
   int _cleanStreak = 0;
 bool _isPlayingVoice = false;
 final AudioPlayer _audioPlayer = AudioPlayer();
@@ -50,33 +55,69 @@ static const String coachUrl = 'https://web-production-a5f3b.up.railway.app/coac
   List<String> _phaseSequence = [];
   bool _isFront = true;
 
+
+Future<List<int>> _convertCameraImage(CameraImage image) async {
+  final bytes = image.planes[0].bytes;
+  final width = image.width;
+  final height = image.height;
+
+  final rgbImage = img.Image(width: width, height: height);
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final int pixel = y * image.planes[0].bytesPerRow + x * 4;
+      final int b = bytes[pixel];
+      final int g = bytes[pixel + 1];
+      final int r = bytes[pixel + 2];
+      rgbImage.setPixelRgb(x, y, r, g, b);
+    }
+  }
+
+  return img.encodeJpg(rgbImage);
+} 
 Future<void> _triggerCoachVoice({required String form, required int reps, required int streak}) async {
   if (_isPlayingVoice) return; // don't interrupt
   _isPlayingVoice = true;
   try {
-    final response = await http.post(
-      Uri.parse(coachUrl),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'form': form,
-        'reps': reps,
-        'streak': streak,
-        'personality': 'tsundere',
-        'voice_id': 'YOUR_VOICE_ID_HERE',
-      }),
-    );
-    if (response.statusCode == 200) {
-      final bytes = response.bodyBytes;
-      final source = LockCachingAudioSource(Uri.dataFromBytes(bytes, mimeType: 'audio/mpeg'));
-      await _audioPlayer.setAudioSource(source);
-      await _audioPlayer.play();
-    }
-  } catch (e) {
-    debugPrint('Voice error: $e');
+  final response = await http.post(
+    Uri.parse(coachUrl),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'form': form,
+      'reps': reps,
+      'streak': streak,
+      'personality': 'tsundere',
+      'voice_id': 'vGQNBgLaiM3EdZtxIiuY',
+    }),
+  );
+
+  // ADD THIS — log what you're actually getting back
+  debugPrint('Coach status: ${response.statusCode}');
+  debugPrint('Coach content-type: ${response.headers['content-type']}');
+  debugPrint('Coach body length: ${response.bodyBytes.length}');
+
+  if (response.statusCode == 200 && 
+      response.headers['content-type']?.contains('audio') == true) {
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/coach_voice.mp3');
+    final sink = file.openWrite();
+    sink.add(response.bodyBytes);
+    await sink.flush();
+    await sink.close();
+    await _audioPlayer.stop(); // reset player state first
+    await _audioPlayer.play(DeviceFileSource(file.path));
+  } else {
+    debugPrint('Bad response: ${utf8.decode(response.bodyBytes)}');
   }
-  _isPlayingVoice = false;
+} catch (e) {
+  debugPrint('Voice error: $e');
+} finally {
+  _isPlayingVoice = false; // move here so it always resets
+}
 }
 Future<void> _toggleCamera() async {
+  setState(() => _isInitialized = false);
+  try { await _controller.stopImageStream(); } catch (_) {}
   _isFront = !_isFront;
   final selected = cameras.firstWhere(
     (c) => c.lensDirection == (_isFront ? CameraLensDirection.front : CameraLensDirection.back),
@@ -86,73 +127,72 @@ Future<void> _toggleCamera() async {
   _controller = CameraController(selected, ResolutionPreset.medium, enableAudio: false);
   await _controller.initialize();
   await _controller.setFlashMode(FlashMode.off);
-  if (mounted) setState(() {});
+  if (mounted) {
+    setState(() => _isInitialized = true);
+    _startSending();
+  }
 }
 
   @override
-  void initState() {
-    super.initState();
-    _initCamera();
-  }
+void initState() {
+  super.initState();
+  _audioPlayer.setVolume(1.0);
+  _initCamera();
+}
 
   Future<void> _initCamera() async {
-    _controller = CameraController(cameras[0], ResolutionPreset.medium, enableAudio: false);
+  if (cameras.isEmpty) return;
+  _controller = CameraController(cameras[0], ResolutionPreset.medium, enableAudio: false);
     await _controller.initialize();
     await _controller.setFlashMode(FlashMode.off);
     if (mounted) {
       setState(() => _isInitialized = true);
       _startSending();
+      
     }
   }
 
   void _startSending() {
-    Timer.periodic(const Duration(milliseconds: 500), (timer) async {
-      if (!mounted) { timer.cancel(); return; }
-      if (_isSending || !_controller.value.isInitialized) return;
-      _isSending = true;
-      debugPrint('Sending frame...');
-      try {
-        final image = await _controller.takePicture();
-        final bytes = await image.readAsBytes();
-        final request = http.MultipartRequest('POST', Uri.parse(apiUrl));
-        request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'frame.jpg'));
-        final response = await request.send();
-        final body = await response.stream.bytesToString();
-        final data = jsonDecode(body);
+  _controller.startImageStream((CameraImage image) async {
+    if (_isSending || !mounted) return;
+    if (DateTime.now().difference(_lastSent).inMilliseconds < 1000) return;
+    _lastSent = DateTime.now();
+    _isSending = true;
+    try {
+      final bytes = await _convertCameraImage(image);
+      final request = http.MultipartRequest('POST', Uri.parse(apiUrl));
+      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'frame.jpg'));
+      final response = await request.send();
+      final body = await response.stream.bytesToString();
+      final data = jsonDecode(body);
 
-        final phase = data['phase'] ?? '--';
-        debugPrint('Phase: $phase');
-        final form = data['form'] ?? '';
+      final phase = data['phase'] ?? '--';
+      final form = data['form'] ?? '';
 
-if (phase != _lastPhase) {
-  _lastPhase = phase;
-  if (phase == 'bottom') {
-    _phaseSequence.add('bottom');
-    // Bad form — fire immediately
-    if (form.isNotEmpty && form != 'Correct') {
-      _cleanStreak = 0;
-      _triggerCoachVoice(form: form, reps: _reps, streak: 0);
-    }
-  } else if (phase == 'ascending' && _phaseSequence.contains('bottom')) {
-    _reps++;
-    _phaseSequence = [];
-    if (form == 'Correct' || form.isEmpty) {
-      _cleanStreak++;
-      // Encourage after 2 clean reps
-      if (_cleanStreak % 2 == 0) {
-        _triggerCoachVoice(form: 'Correct', reps: _reps, streak: _cleanStreak);
+      if (phase != _lastPhase) {
+        _lastPhase = phase;
+        if (phase == 'bottom') {
+          _phaseSequence.add('bottom');
+          if (form.isNotEmpty && form != 'Correct') {
+            _cleanStreak = 0;
+            _triggerCoachVoice(form: form, reps: _reps, streak: 0);
+          }
+        } else if (phase == 'ascending' && _phaseSequence.contains('bottom')) {
+          _reps++;
+          _phaseSequence = [];
+          _cleanStreak++;
+          _triggerCoachVoice(form: 'Correct', reps: _reps, streak: _cleanStreak);
+        }
       }
+
+      if (mounted) setState(() { _phase = phase; _form = form; });
+    } catch (e, stack) {
+      debugPrint('Error: $e');
+      debugPrint('Stack: $stack');
     }
-  }
+    _isSending = false;
+  });
 }
-
-        if (mounted) setState(() { _phase = phase; _form = form; });
-      } catch (e) {
-        debugPrint('Error: $e');
-      }
-      _isSending = false;
-    });
-  }
 
   @override
   void dispose() {
