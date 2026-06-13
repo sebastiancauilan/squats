@@ -8,6 +8,9 @@ import mediapipe as mp
 import anthropic
 import requests
 from fastapi.responses import Response
+import sys
+print("starting up", flush=True)
+sys.stdout.flush()
 
 app = FastAPI()
 
@@ -138,5 +141,7 @@ async def coach_voice(data: dict):
             "voice_settings": {"stability": 0.4, "similarity_boost": 0.8, "style": 0.6}
         }
     )
+    print(f"ElevenLabs status: {tts_response.status_code}", flush=True)
+    print(f"ElevenLabs body: {tts_response.text[:300]}", flush=True)
 
     return Response(content=tts_response.content, media_type="audio/mpeg")
