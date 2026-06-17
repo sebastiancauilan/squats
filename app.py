@@ -123,44 +123,42 @@ PERSONALITY_PROMPTS = {
 
 @app.post('/coach-voice')
 async def coach_voice(data: dict):
-    form = data.get('form', 'Correct')
-    reps = data.get('reps', 0)
-    streak = data.get('streak', 0)
-    personality = data.get('personality', 'tsundere')
-    voice_id = data.get('voice_id', 'vGQNBgLaiM3EdZtxIiuY')
-
-    if form != 'Correct' and form:
-        situation = f"The user just made a form error: {form}. React to this specific error."
-    elif streak >= 2:
-        situation = f"The user just completed {reps} reps with {streak} clean reps in a row. Give encouragement."
-    else:
-        situation = f"The user just completed rep {reps}. Give a short reaction."
-
-    anthropic_client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
-    message = anthropic_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=100,
-        system=PERSONALITY_PROMPTS.get(personality, PERSONALITY_PROMPTS['tsundere']),
-        messages=[{"role": "user", "content": situation}]
-    )
-    line = message.content[0].text.strip()
-
-    xi_key = os.environ['ELEVENLABS_API_KEY']
-    tts_response = requests.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-        headers={"xi-api-key": xi_key, "Content-Type": "application/json"},
-        json={
-            "text": line,
-            "model_id": "eleven_tuvoicerbo_v2_5",
-            "voice_settings": {"stability": 0.2, "similarity_boost": 0.85, "style": 0.8}
-        }
-    )
-    print(f"ElevenLabs status: {tts_response.status_code}", flush=True)
-
-    audio_bytes = tts_response.content
-
-    # Decode mp3 and compute amplitude envelope
     try:
+        form = data.get('form', 'Correct')
+        reps = data.get('reps', 0)
+        streak = data.get('streak', 0)
+        personality = data.get('personality', 'tsundere')
+        voice_id = data.get('voice_id', 'vGQNBgLaiM3EdZtxIiuY')
+
+        if form != 'Correct' and form:
+            situation = f"The user just made a form error: {form}. React to this specific error."
+        elif streak >= 2:
+            situation = f"The user just completed {reps} reps with {streak} clean reps in a row. Give encouragement."
+        else:
+            situation = f"The user just completed rep {reps}. Give a short reaction."
+
+        anthropic_client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+        message = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=100,
+            system=PERSONALITY_PROMPTS.get(personality, PERSONALITY_PROMPTS['tsundere']),
+            messages=[{"role": "user", "content": situation}]
+        )
+        line = message.content[0].text.strip()
+
+        xi_key = os.environ['ELEVENLABS_API_KEY']
+        tts_response = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": xi_key, "Content-Type": "application/json"},
+            json={
+                "text": line,
+                "model_id": "eleven_tuvoicerbo_v2_5",
+                "voice_settings": {"stability": 0.2, "similarity_boost": 0.85, "style": 0.8}
+            }
+        )
+
+        audio_bytes = tts_response.content
+
         segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
         window_ms = 80
         amplitudes = []
@@ -172,14 +170,14 @@ async def coach_voice(data: dict):
         if max_amp == 0:
             max_amp = 1
         normalized = [round(a / max_amp, 3) for a in amplitudes]
+
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        return {
+            "audio_base64": audio_b64,
+            "amplitudes": normalized,
+            "window_ms": window_ms
+        }
     except Exception as e:
-        print(f"Amplitude extraction failed: {e}", flush=True)
-        normalized = []
-
-    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-
-    return {
-        "audio_base64": audio_b64,
-        "amplitudes": normalized,
-        "window_ms": window_ms
-    }
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
