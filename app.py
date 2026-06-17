@@ -9,6 +9,8 @@ import anthropic
 import requests
 from fastapi.responses import Response
 import sys
+from pydub import AudioSegment
+import base64
 print("starting up", flush=True)
 sys.stdout.flush()
 
@@ -91,20 +93,31 @@ async def predict(file: UploadFile = File(...)):
 
     form = None
     if phase == 'bottom':
-        ff = [[left_knee, right_knee, left_hip, right_hip,
-               left_ankle, right_ankle, spine, torso_lean,
-               left_knee_lat, right_knee_lat, symmetry, hip_depth]]
-        proba = form_model.predict_proba(ff)[0]
-        if proba.max() >= 0.80:
-            form = form_labels[proba.argmax()]
-        else:
-            form = 'Correct'
+    ff = [[left_knee, right_knee, left_hip, right_hip,
+           left_ankle, right_ankle, spine, torso_lean,
+           left_knee_lat, right_knee_lat, symmetry, hip_depth]]
+    proba = form_model.predict_proba(ff)[0]
 
-    return {'phase': phase, 'form': form}
+    if proba.max() >= 0.93:
+        detected = form_labels[proba.argmax()]
+    else:
+        detected = 'Correct'
+
+    form_error_buffer.append(detected)
+    if len(form_error_buffer) > 3:
+        form_error_buffer.pop(0)
+
+    if form_error_buffer.count(detected) >= 3:
+        form = detected
+    else:
+        form = 'Correct'
+
+return {'phase': phase, 'form': form}
 
 PERSONALITY_PROMPTS = {
-    "tsundere": "You are a tsundere anime girl personal trainer. You secretly care but act annoyed and reluctant. Short sentences only, max 15 words. Be specific about the form error or rep count.",
-    "yandere": "You are a yandere anime girl personal trainer. Obsessively devoted, slightly intense, wants them to be perfect for you. Short sentences only, max 15 words.",
+    "tsundere": "You are a whiny, aggressive tsundere anime girl personal trainer. Use 'baka', 'idiot', and light insults. Act annoyed and reluctant but secretly care. Short sentences only, max 10 words ONLY. Give quick acknolwedgment about form and number of reps.",
+    "yandere": "You are a yandere anime girl personal trainer. Obsessively devoted, slightly intense, wants them to be perfect for you. PLEASE use words like senpai to refer to the person. Short sentences only, max 15 words.",
+    "dominant": "You are a strict, commanding anime girl personal trainer. Demanding, intense, no excuses. Short sentences only, max 15 words. Be specific about the form error or rep count.",
 }
 
 @app.post('/coach-voice')
@@ -137,11 +150,35 @@ async def coach_voice(data: dict):
         headers={"xi-api-key": xi_key, "Content-Type": "application/json"},
         json={
             "text": line,
-            "model_id": "eleven_turbo_v2_5",
-            "voice_settings": {"stability": 0.4, "similarity_boost": 0.8, "style": 0.6}
+            "model_id": "eleven_tuvoicerbo_v2_5",
+            "voice_settings": {"stability": 0.2, "similarity_boost": 0.85, "style": 0.8}
         }
     )
     print(f"ElevenLabs status: {tts_response.status_code}", flush=True)
-    print(f"ElevenLabs body: {tts_response.text[:300]}", flush=True)
 
-    return Response(content=tts_response.content, media_type="audio/mpeg")
+    audio_bytes = tts_response.content
+
+    # Decode mp3 and compute amplitude envelope
+    try:
+        segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
+        window_ms = 80
+        amplitudes = []
+        for start_ms in range(0, len(segment), window_ms):
+            chunk = segment[start_ms:start_ms + window_ms]
+            amplitudes.append(chunk.rms)
+
+        max_amp = max(amplitudes) if amplitudes else 1
+        if max_amp == 0:
+            max_amp = 1
+        normalized = [round(a / max_amp, 3) for a in amplitudes]
+    except Exception as e:
+        print(f"Amplitude extraction failed: {e}", flush=True)
+        normalized = []
+
+    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+    return {
+        "audio_base64": audio_b64,
+        "amplitudes": normalized,
+        "window_ms": window_ms
+    }
