@@ -6,7 +6,7 @@ import 'dart:async';
 import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 
 List<CameraDescription> cameras = [];
 const String apiUrl = 'https://web-production-a5f3b.up.railway.app/predict';
@@ -43,7 +43,7 @@ class _CameraScreenState extends State<CameraScreen> {
   DateTime _lastSent = DateTime.now();
   int _cleanStreak = 0;
 bool _isPlayingVoice = false;
-final AudioPlayer _audioPlayer = AudioPlayer();
+final FlutterSoundPlayer _soundPlayer = FlutterSoundPlayer();
 static const String coachUrl = 'https://web-production-a5f3b.up.railway.app/coach-voice';
   late CameraController _controller;
   bool _isInitialized = false;
@@ -54,6 +54,14 @@ static const String coachUrl = 'https://web-production-a5f3b.up.railway.app/coac
   String _lastPhase = '';
   List<String> _phaseSequence = [];
   bool _isFront = true;
+  String _mouthFrame = 'mouth_closed';
+final Map<String, String> _voiceIds = {
+  'tsundere': 'vGQNBgLaiM3EdZtxIiuY',
+  'yandere': 'eVItLK1UvXctxuaRV2Oq',
+  'dominant': 'cENJycK4Wg62xVikqkaA',
+};
+  String _personality = 'tsundere';
+  final List<String> _personalities = ['tsundere', 'yandere', 'dominant'];
 
 
 Future<List<int>> _convertCameraImage(CameraImage image) async {
@@ -75,6 +83,34 @@ Future<List<int>> _convertCameraImage(CameraImage image) async {
 
   return img.encodeJpg(rgbImage);
 } 
+Future<void> _initSound() async {
+  await _soundPlayer.openPlayer();
+  await _soundPlayer.setSubscriptionDuration(const Duration(milliseconds: 80));
+  _attachProgressListener();
+}
+
+void _attachProgressListener() {
+  _soundPlayer.onProgress!.listen((e) {
+    if (!_soundPlayer.isPlaying) return;
+    setState(() {
+      final ms = e.position.inMilliseconds % 240;
+      if (ms < 80) _mouthFrame = 'mouth_closed';
+      else if (ms < 160) _mouthFrame = 'mouth_half';
+      else _mouthFrame = 'mouth_open';
+    });
+  });
+}
+
+Future<void> _playCoachAudio(String path) async {
+  if (!_soundPlayer.isOpen()) {
+    await _soundPlayer.openPlayer();
+  }
+  await _soundPlayer.startPlayer(
+    fromURI: path,
+    codec: Codec.mp3,
+    whenFinished: () => setState(() => _mouthFrame = 'mouth_closed'),
+  );
+}
 Future<void> _triggerCoachVoice({required String form, required int reps, required int streak}) async {
   if (_isPlayingVoice) return; // don't interrupt
   _isPlayingVoice = true;
@@ -86,8 +122,8 @@ Future<void> _triggerCoachVoice({required String form, required int reps, requir
       'form': form,
       'reps': reps,
       'streak': streak,
-      'personality': 'tsundere',
-      'voice_id': 'vGQNBgLaiM3EdZtxIiuY',
+      'personality': _personality,
+      'voice_id': _voiceIds[_personality] ?? 'vGQNBgLaiM3EdZtxIiuY',
     }),
   );
 
@@ -96,16 +132,19 @@ Future<void> _triggerCoachVoice({required String form, required int reps, requir
   debugPrint('Coach content-type: ${response.headers['content-type']}');
   debugPrint('Coach body length: ${response.bodyBytes.length}');
 
-  if (response.statusCode == 200 && 
-      response.headers['content-type']?.contains('audio') == true) {
+if (response.statusCode == 200 && 
+    response.bodyBytes.length > 1000 &&
+    response.headers['content-type']?.contains('audio') == true) {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/coach_voice.mp3');
     final sink = file.openWrite();
     sink.add(response.bodyBytes);
     await sink.flush();
     await sink.close();
-    await _audioPlayer.stop(); // reset player state first
-    await _audioPlayer.play(DeviceFileSource(file.path));
+    if (_soundPlayer.isPlaying) {
+      await _soundPlayer.stopPlayer();
+    }
+    await _playCoachAudio(file.path);
   } else {
     debugPrint('Bad response: ${utf8.decode(response.bodyBytes)}');
   }
@@ -115,6 +154,8 @@ Future<void> _triggerCoachVoice({required String form, required int reps, requir
   _isPlayingVoice = false; // move here so it always resets
 }
 }
+
+  
 Future<void> _toggleCamera() async {
   setState(() => _isInitialized = false);
   try { await _controller.stopImageStream(); } catch (_) {}
@@ -123,7 +164,10 @@ Future<void> _toggleCamera() async {
     (c) => c.lensDirection == (_isFront ? CameraLensDirection.front : CameraLensDirection.back),
     orElse: () => cameras[0],
   );
-  await _controller.dispose();
+  await _soundPlayer.closePlayer();
+await _soundPlayer.openPlayer();
+await _soundPlayer.setSubscriptionDuration(const Duration(milliseconds: 80));
+_attachProgressListener();
   _controller = CameraController(selected, ResolutionPreset.medium, enableAudio: false);
   await _controller.initialize();
   await _controller.setFlashMode(FlashMode.off);
@@ -136,8 +180,12 @@ Future<void> _toggleCamera() async {
   @override
 void initState() {
   super.initState();
-  _audioPlayer.setVolume(1.0);
-  _initCamera();
+  _init();
+}
+
+Future<void> _init() async {
+  await _initSound();
+  await _initCamera();
 }
 
   Future<void> _initCamera() async {
@@ -181,7 +229,9 @@ void initState() {
           _reps++;
           _phaseSequence = [];
           _cleanStreak++;
-          _triggerCoachVoice(form: 'Correct', reps: _reps, streak: _cleanStreak);
+if (_reps % 3 == 0 || _cleanStreak % 3 == 0) {
+  _triggerCoachVoice(form: 'Correct', reps: _reps, streak: _cleanStreak);
+}
         }
       }
 
@@ -195,11 +245,11 @@ void initState() {
 }
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-    _audioPlayer.dispose();
-  }
+void dispose() {
+  _controller.dispose();
+  _soundPlayer.closePlayer();
+  super.dispose();
+}
 
 @override
 Widget build(BuildContext context) {
@@ -241,6 +291,40 @@ Widget build(BuildContext context) {
             onPressed: _toggleCamera,
           ),
         ),
+        Positioned(
+  top: 100, right: 20,
+  child: DropdownButton<String>(
+    value: _personality,
+    dropdownColor: Colors.black87,
+    style: const TextStyle(color: Colors.white, fontSize: 14),
+    underline: const SizedBox(),
+    menuMaxHeight: 150,
+    items: _personalities.map((p) => DropdownMenuItem(
+      value: p,
+      child: Text(p),
+    )).toList(),
+    onChanged: (val) => setState(() => _personality = val!),
+  ),
+),
+Positioned(
+  bottom: 0,
+  right: 0,
+  child: Container(
+  width: 180,
+  height: 315,
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.9),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Stack(
+      children: [
+        Positioned.fill(child: Image.asset('assets/characters/base/torso_female5.png', fit: BoxFit.fill)),
+        Positioned.fill(child: Image.asset('assets/characters/face_shape/face.png', fit: BoxFit.fill)),
+        Positioned.fill(child: Image.asset('assets/characters/mouth/$_mouthFrame.png', fit: BoxFit.fill)),
+      ],
+    ),
+  ),
+),
       ],
     ),
 );
