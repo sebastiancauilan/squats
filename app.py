@@ -50,6 +50,7 @@ form_labels = {
     4: 'Heels off ground',
     5: 'Asymmetric squat'
 }
+form_error_buffer = []
 
 def angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
@@ -93,26 +94,26 @@ async def predict(file: UploadFile = File(...)):
 
     form = None
     if phase == 'bottom':
-    ff = [[left_knee, right_knee, left_hip, right_hip,
-           left_ankle, right_ankle, spine, torso_lean,
-           left_knee_lat, right_knee_lat, symmetry, hip_depth]]
-    proba = form_model.predict_proba(ff)[0]
+        ff = [[left_knee, right_knee, left_hip, right_hip,
+               left_ankle, right_ankle, spine, torso_lean,
+               left_knee_lat, right_knee_lat, symmetry, hip_depth]]
+        proba = form_model.predict_proba(ff)[0]
 
-    if proba.max() >= 0.93:
-        detected = form_labels[proba.argmax()]
-    else:
-        detected = 'Correct'
+        if proba.max() >= 0.93:
+            detected = form_labels[proba.argmax()]
+        else:
+            detected = 'Correct'
 
-    form_error_buffer.append(detected)
-    if len(form_error_buffer) > 3:
-        form_error_buffer.pop(0)
+        form_error_buffer.append(detected)
+        if len(form_error_buffer) > 3:
+            form_error_buffer.pop(0)
 
-    if form_error_buffer.count(detected) >= 3:
-        form = detected
-    else:
-        form = 'Correct'
+        if form_error_buffer.count(detected) >= 3:
+            form = detected
+        else:
+            form = 'Correct'
 
-return {'phase': phase, 'form': form}
+    return {'phase': phase, 'form': form}
 
 PERSONALITY_PROMPTS = {
     "tsundere": "You are a whiny, aggressive tsundere anime girl personal trainer. Use 'baka', 'idiot', and light insults. Act annoyed and reluctant but secretly care. Short sentences only, max 10 words ONLY. Give quick acknolwedgment about form and number of reps.",
