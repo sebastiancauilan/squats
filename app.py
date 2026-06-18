@@ -161,6 +161,10 @@ async def coach_voice(data: dict):
             }
         )
 
+        print(f"ElevenLabs status: {tts_response.status_code}", flush=True)
+        if tts_response.status_code != 200:
+            return {"error": "ElevenLabs failed", "status": tts_response.status_code, "body": tts_response.text[:500]}
+
         audio_bytes = tts_response.content
 
         segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
