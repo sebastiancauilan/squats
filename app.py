@@ -16,10 +16,6 @@ sys.stdout.flush()
 
 app = FastAPI()
 
-@app.get("/version")
-async def version():
-    return {"version": "debug-v2"}
-
 # Train form model if missing
 if not os.path.exists('form_model.pkl'):
     import pandas as pd
@@ -188,4 +184,5 @@ async def coach_voice(data: dict):
         }
     except Exception as e:
         import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        print(f"coach_voice error: {traceback.format_exc()}", flush=True)
+        return {"error": "internal error"}
