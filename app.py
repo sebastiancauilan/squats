@@ -156,7 +156,7 @@ async def coach_voice(data: dict):
             headers={"xi-api-key": xi_key, "Content-Type": "application/json"},
             json={
                 "text": line,
-                "model_id": "eleven_tuvoicerbo_v2_5",
+                "model_id": "eleven_turbo_v2_5",
                 "voice_settings": {"stability": 0.2, "similarity_boost": 0.85, "style": 0.8}
             }
         )
