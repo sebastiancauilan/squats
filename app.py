@@ -16,6 +16,10 @@ sys.stdout.flush()
 
 app = FastAPI()
 
+@app.get("/version")
+async def version():
+    return {"version": "debug-v2"}
+
 # Train form model if missing
 if not os.path.exists('form_model.pkl'):
     import pandas as pd
